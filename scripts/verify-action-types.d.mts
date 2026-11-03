@@ -16,6 +16,7 @@ export interface LoggedAction {
 }
 
 export function caseEndpoints(name: string | undefined): string[];
+export function gpTime(value: string | undefined): number;
 export function evidenceOf(tags?: string[]): string | undefined;
 export function placeholderPath(endpointPath: string): string;
 export function reconcile(calls: RecordedCall[], actions: LoggedAction[], toleranceMs?: number): Map<number, LoggedAction>;

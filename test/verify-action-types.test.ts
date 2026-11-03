@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   applyObservedType,
   caseEndpoints,
+  gpTime,
   placeholderPath,
   reconcile,
   verdictFor
@@ -40,6 +41,12 @@ describe('verify-action-types', () => {
     expect(placeholderPath('/merchants/{id}/orders/{ORD_id}')).toBe(
       '/merchants/MER_gpcliVerifyPlaceholder0000000/orders/ORD_gpcliVerifyPlaceholder0000000'
     );
+  });
+
+  it('reads zoneless GP timestamps as UTC', () => {
+    expect(gpTime('2026-11-03T14:31:44.912')).toBe(Date.parse('2026-11-03T14:31:44.912Z'));
+    expect(gpTime('2026-11-03 14:31:44')).toBe(Date.parse('2026-11-03T14:31:44Z'));
+    expect(gpTime('2026-11-03T14:31:44.912Z')).toBe(Date.parse('2026-11-03T14:31:44.912Z'));
   });
 
   describe('reconcile', () => {

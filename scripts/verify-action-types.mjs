@@ -52,6 +52,12 @@ export function caseEndpoints(name) {
   return match ? match[1].split(' or ').map((s) => s.trim()) : [];
 }
 
+/** Parse a GP timestamp as UTC; some actions (e.g. GET_CHALLENGE_RESULT) omit the zone. */
+export function gpTime(value) {
+  const zoneless = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/.exec(String(value ?? '').trim());
+  return zoneless ? Date.parse(`${zoneless[1]}T${zoneless[2]}Z`) : Date.parse(value);
+}
+
 export function evidenceOf(tags = []) {
   const tag = tags.find((t) => EVIDENCE_TAGS.includes(t));
   return tag ? tag.replace('action-type-', '') : undefined;
@@ -92,7 +98,7 @@ export function reconcile(calls, actions, toleranceMs = 300) {
       claimed.add(anchor.id);
       result.set(call.seq, anchor);
       if (call.tStart !== undefined && call.tEnd !== undefined) {
-        offsets.push(Date.parse(anchor.time_created) - (call.tStart + call.tEnd) / 2);
+        offsets.push(gpTime(anchor.time_created) - (call.tStart + call.tEnd) / 2);
       }
     } else if (call.responseActionType) {
       result.set(call.seq, { id: call.responseActionId, type: call.responseActionType, http_response_code: String(call.status) });
@@ -110,9 +116,9 @@ export function reconcile(calls, actions, toleranceMs = 300) {
     let best;
     for (const action of pool) {
       if (claimed.has(action.id)) continue;
-      const t = Date.parse(action.time_created);
+      const t = gpTime(action.time_created);
       if (t < from || t > to) continue;
-      if (!best || Math.abs(t - mid) < Math.abs(Date.parse(best.time_created) - mid)) best = action;
+      if (!best || Math.abs(t - mid) < Math.abs(gpTime(best.time_created) - mid)) best = action;
     }
     if (best) {
       claimed.add(best.id);
@@ -275,7 +281,7 @@ class SandboxClient {
       const batch = (await response.json()).actions ?? [];
       let reachedStart = false;
       for (const action of batch) {
-        if (Date.parse(action.time_created) < Date.parse(fromIso)) { reachedStart = true; continue; }
+        if (gpTime(action.time_created) < Date.parse(fromIso)) { reachedStart = true; continue; }
         if (action.app_id === appId) all.push(action);
       }
       if (reachedStart || batch.length < 1000) break;
@@ -362,19 +368,49 @@ async function runFlows(client, hits) {
       await hit('POST /transactions/{id}/capture', 'POST', `/transactions/${c.json.id}/capture`, {});
     }
 
+    const authAmount = '134';
+    const authReference = `gpcli-verify-${Date.now()}`;
+    const authNotifications = {
+      challenge_return_url: 'https://example.com/gpcli-verify/3ds-return',
+      three_ds_method_return_url: 'https://example.com/gpcli-verify/3ds-method'
+    };
+    const authCard = { number: CARD.number, expiry_month: CARD.expiry_month, expiry_year: CARD.expiry_year };
     const avail = await hit('POST /authentications', 'POST', '/authentications', {
-      account_name: tx, channel: 'CNP', amount: '134', currency: 'USD', country: 'US',
-      reference: `gpcli-verify-${Date.now()}`,
-      notifications: {
-        challenge_return_url: 'https://example.com/gpcli-verify/3ds-return',
-        three_ds_method_return_url: 'https://example.com/gpcli-verify/3ds-method'
-      },
-      payment_method: { entry_mode: 'ECOM', card: { number: CARD.number, expiry_month: CARD.expiry_month, expiry_year: CARD.expiry_year } }
+      account_name: tx, channel: 'CNP', amount: authAmount, currency: 'USD', country: 'US',
+      reference: authReference,
+      notifications: authNotifications,
+      payment_method: { entry_mode: 'ECOM', card: authCard }
     });
     const list = await client.call('GET', '/authentications?page_size=1', undefined, 'setup: list authentications');
     const authId = avail.json.id ?? firstId(list.json, 'authentications');
     if (authId) {
       await hitUntilFound('GET /authentications/{id}', 'GET', `/authentications/${authId}`);
+      // The test card is frictionless, so initiate completes the authentication and
+      // /result succeeds. Without initiate, GP rejects /result (server_trans_id not found).
+      // A decoupled_notification_url would make GP demand decoupled_flow_request.
+      await hit('POST /authentications/{id}/initiate', 'POST', `/authentications/${authId}/initiate`, {
+        three_ds: { source: 'BROWSER', preference: 'NO_PREFERENCE' },
+        account_name: tx, channel: 'CNP', amount: authAmount, currency: 'USD', country: 'US',
+        method_url_completion_status: 'YES',
+        merchant_contact_url: 'https://example.com/gpcli-verify/contact',
+        order: {
+          time_created_reference: new Date().toISOString(),
+          amount: authAmount, currency: 'USD', reference: authReference, address_match_indicator: 'false',
+          shipping_address: { line1: '1 Test St', city: 'Atlanta', postal_code: '30301', state: 'GA', country: '840' }
+        },
+        payment_method: { entry_mode: 'ECOM', card: authCard },
+        payer: {
+          email: 'gpcli-verify@example.com',
+          billing_address: { line1: '1 Test St', city: 'Atlanta', postal_code: '30301', state: 'GA', country: '840' }
+        },
+        browser_data: {
+          accept_header: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          color_depth: 'TWENTY_FOUR_BITS', ip: '123.123.123.123', java_enabled: 'false', javascript_enabled: 'true',
+          language: 'en-US', screen_height: '1080', screen_width: '1920', challenge_window_size: 'FULL_SCREEN',
+          timezone: '0', user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        },
+        notifications: authNotifications
+      });
       await hit('GET /authentications/{id}/result', 'GET', `/authentications/${authId}/result`);
     }
 
