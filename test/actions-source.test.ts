@@ -96,6 +96,12 @@ describe('actions as an observation source', () => {
     it('stringifies a numeric HTTP status so responseCodeIn compares strings', () => {
       expect(adaptGpActionObservation(action({ http_response_code: 201 }) as never).responseCode).toBe('201');
     });
+
+    it('reads a zoneless time_created as UTC and normalizes it', () => {
+      // GP returns some actions (e.g. GET_CHALLENGE_RESULT) without a trailing Z.
+      const record = adaptGpActionObservation(action({ time_created: '2026-10-28T11:58:30.123' }) as never);
+      expect(record.timeCreated).toBe('2026-10-28T11:58:30.123Z');
+    });
   });
 
   describe('fetchRecentActionsPaginated', () => {
@@ -122,6 +128,24 @@ describe('actions as an observation source', () => {
       expect(url.pathname).toBe('/ucp/actions');
       expect(url.searchParams.get('from_time_created')).toBe('2026-10-28');
       expect(url.searchParams.get('order')).toBe('DESC');
+    });
+
+    it('keeps a zoneless in-window action regardless of the machine time zone', async () => {
+      const originalTz = process.env.TZ;
+      process.env.TZ = 'America/New_York';
+      try {
+        const fetchImpl = vi.fn().mockResolvedValue(
+          okResponse([action({ id: 'zoneless', time_created: '2026-10-28T11:58:00.000' })])
+        );
+
+        const records = await fetchRecentActionsPaginated(deps(fetchImpl as unknown as typeof fetch), window);
+
+        expect(records.map((r) => r.id)).toEqual(['zoneless']);
+        expect(records[0]!.timeCreated).toBe('2026-10-28T11:58:00.000Z');
+      } finally {
+        if (originalTz === undefined) delete process.env.TZ;
+        else process.env.TZ = originalTz;
+      }
     });
 
     it('reads the GP window format as UTC regardless of the machine time zone', async () => {

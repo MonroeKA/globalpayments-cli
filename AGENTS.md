@@ -380,3 +380,7 @@ next build.
   `observability: partial`; do not pretend they are distinguishable.
 - `/actions` filters by day (`from_time_created` is a date). The exact window is
   re-applied client-side. New actions can take several seconds to appear.
+- GP returns some action timestamps without a zone (`GET_CHALLENGE_RESULT` sends
+  `2026-11-03T14:31:44.912`, no `Z`). They are UTC. `adaptGpActionObservation`
+  normalizes `timeCreated` to UTC ISO; never `Date.parse` a raw GP timestamp, or the
+  machine's UTC offset shifts it out of the window.

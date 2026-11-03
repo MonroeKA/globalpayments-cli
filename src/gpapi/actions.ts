@@ -239,9 +239,10 @@ export const SELF_GENERATED_ACTION_TYPES: ReadonlySet<string> = new Set([
 export function adaptGpActionObservation(apiAction: GpActionApiShape): TransactionRecord {
   const httpCode = apiAction.http_response_code;
   const errorCode = apiAction.response_code;
+  const timeCreated = apiAction.time_created ?? apiAction.timeCreated;
   return {
     id: apiAction.id ?? 'unknown-id',
-    timeCreated: apiAction.time_created ?? apiAction.timeCreated ?? new Date(0).toISOString(),
+    timeCreated: timeCreated ? normalizeGpTime(timeCreated) : new Date(0).toISOString(),
     type: apiAction.action_type ?? apiAction.type,
     status: apiAction.resource_status,
     resource: apiAction.resource,
@@ -266,17 +267,24 @@ export interface RecentActionsQuery {
 
 function parseTime(value: string | undefined): number {
   if (!value) return Number.NaN;
-  return Date.parse(value);
+  return parseGpTime(value);
 }
 
 /**
- * Parse a polling-window bound. `calculatePollingWindow` emits GP's
- * "YYYY-MM-DD HH:MM:SS" format, which is UTC but carries no zone; `Date.parse`
- * would read it as local time and shift the window by the machine's UTC offset.
+ * Parse a GP timestamp as UTC. GP omits the zone on some values: polling-window
+ * bounds use "YYYY-MM-DD HH:MM:SS", and some actions (e.g. GET_CHALLENGE_RESULT)
+ * report `time_created` as "YYYY-MM-DDTHH:MM:SS.sss". `Date.parse` would read either
+ * as local time and shift it by the machine's UTC offset.
  */
-function parseWindowBound(value: string): number {
-  const gpFormat = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/.exec(value.trim());
-  return gpFormat ? Date.parse(`${gpFormat[1]}T${gpFormat[2]}Z`) : Date.parse(value);
+function parseGpTime(value: string): number {
+  const zoneless = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/.exec(value.trim());
+  return zoneless ? Date.parse(`${zoneless[1]}T${zoneless[2]}Z`) : Date.parse(value);
+}
+
+/** Canonical UTC ISO form, so downstream `Date.parse` callers never see a zoneless value. */
+function normalizeGpTime(value: string): string {
+  const parsed = parseGpTime(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : value;
 }
 
 async function fetchActionsPageStrict(
@@ -326,8 +334,8 @@ export async function fetchRecentActionsPaginated(
   options: { maxPages?: number } = {}
 ): Promise<TransactionRecord[]> {
   const maxPages = options.maxPages ?? 3;
-  const from = parseWindowBound(query.fromTimeCreated);
-  const to = parseWindowBound(query.toTimeCreated);
+  const from = parseGpTime(query.fromTimeCreated);
+  const to = parseGpTime(query.toTimeCreated);
   const records: TransactionRecord[] = [];
 
   for (let page = 1; page <= maxPages; page += 1) {
