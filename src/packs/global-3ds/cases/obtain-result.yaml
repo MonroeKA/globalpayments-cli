@@ -6,9 +6,9 @@ source: actions
 observability: polling
 tags:
   - 3ds
-  - action-type-documented
+  - action-type-confirmed
 mode: latest
-# Action type taken from GP developer documentation examples.
+# Action type confirmed in a GP sandbox action log (frictionless 3DS2 flow, 2026-11-03).
 # Required to pass the liability-shift data into the sale.
 matcher:
   type: GET_CHALLENGE_RESULT
