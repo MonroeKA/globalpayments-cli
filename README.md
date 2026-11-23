@@ -1,12 +1,16 @@
 # @globalpayments/cli
 
-**Certification observer CLI for Global Payments — polls transactions, matches certification test cases, and evaluates pass/fail without submitting transactions.**
+**Global Payments developer CLI. Certification runs observe transactions already sent; API writes are sandbox-only.**
 
-This tool is an observer-only client that runs outside your integration, validating that your system is correctly processing payments according to Global Payments certification requirements. It uses the GP API to poll recent transactions, matches them against case definitions (matcher rules + expectations), applies latest-match-wins logic, and persists structured results for local review and CI/CD integration.
+Certification commands poll recent transactions and actions, match them against Global Payments certification cases, and persist results for local review and CI/CD. The CLI also supports authenticated API requests, transaction lookup, request-log tailing, local synthetic webhook testing, and AI-agent setup.
 
 ## Features
 
-- **Observer-only operation** — No transaction submission; runs alongside your integration for external validation
+- **Certification observer** — `run` and `watch` evaluate transactions and actions already sent by your integration
+- **Sandbox API access** — `api get` reads GP resources; `api post` is blocked outside sandbox
+- **Transaction lookup and request logs** — Inspect one transaction or follow rejected requests in GP action history
+- **Local webhook testing** — Forward webhook requests to a localhost handler and trigger signed synthetic events
+- **AI-agent setup** — Install Global Payments MCP tools and SDK skills for supported coding agents
 - **Latest-match-wins evaluation** — Each case re-evaluates against the newest matching transaction in the poll window
 - **Certification pack system** — Modular, inheritable pack definitions with cases, matchers, and expectations
 - **Safe credential handling** — Redacted config output; credentials loaded from environment or secure config
@@ -22,7 +26,8 @@ This tool is an observer-only client that runs outside your integration, validat
 Every command supports `--json`, and every JSON invocation writes exactly one envelope
 to stdout and nothing else. Failures carry a stable `error.code` plus a `remediation`,
 and exit codes distinguish a certification failure (`1`) from a config (`3`), auth (`4`),
-or network (`5`) problem.
+or network (`5`) problem. API rejection, local webhook delivery, and agent setup have
+their own exit codes (`8`–`10`).
 
 Start here:
 
@@ -44,6 +49,9 @@ See **[AGENTS.md](AGENTS.md)** for the full contract, invariants, and architectu
 | 5 | `NETWORK` | GP API unreachable (retryable) |
 | 6 | `NOT_FOUND` | Unknown pack, case, or result artifact |
 | 7 | `INTERNAL` | Bug in globalpayments |
+| 8 | `API_REJECTED` | GP rejected the API request |
+| 9 | `WEBHOOK_DELIVERY` | Local webhook delivery failed |
+| 10 | `SETUP_FAILED` | Local MCP/skill setup failed |
 
 Exit `1` means the window was read and the cases were judged. If polling never succeeded
 at all, `run` reports the underlying cause (`4` or `5`) instead, so a credentials outage
@@ -78,7 +86,7 @@ The `globalpayments` service builds a local image and runs your project director
 ## Requirements
 
 - **Node.js** ≥ 20
-- **Global Payments API credentials** (app ID + app key for your integration)
+- **Global Payments API credentials** (app ID + app key for an existing portal app)
 - **Sandbox/production account** with transaction access
 
 ## Quick Start
@@ -91,26 +99,31 @@ export GP_API_ACCOUNT_NAME="your-account-name"  # optional; restricts matching t
 export GP_API_ENVIRONMENT="sandbox"              # or: production
 ```
 
-Or create `.globalpayments/config.yaml`:
+For interactive sandbox setup, create or select an existing sandbox app in the
+[Global Payments Developer Portal](https://developer.globalpayments.com), then run
+`globalpayments sandbox create`. It prompts for the app ID and hidden app key, saves
+them to `.env`, adds an ignore rule when needed, and does not create an account or app.
+
+Or generate an optional config file:
 ```bash
 npx @globalpayments/cli init --with-config
-# Writes .env.example (always) and .gpcli/config.yaml (with --with-config)
-# Non-interactive — edit the generated files directly
+# Writes .env.example and globalpayments.config.yaml
+# Pass --config globalpayments.config.yaml when using that generated config.
 ```
 
 ### 2. List available certification cases
 ```bash
-npx @globalpayments/cli cases list --config .globalpayments/config.yaml
+npx @globalpayments/cli cases list --config globalpayments.config.yaml
 # Shows all cases by pack; use --pack <packId> to filter
 ```
 
 ### 3. Run certification observer
 ```bash
 # Watch mode: polls for up to 10 minutes, updates screen in real-time
-npx @globalpayments/cli watch --config .globalpayments/config.yaml --timeout 10m
+npx @globalpayments/cli watch --config globalpayments.config.yaml --timeout 10m
 
 # CI mode: single run, exit non-zero if required cases don't pass
-npx @globalpayments/cli run --config .globalpayments/config.yaml --timeout 5m --json
+npx @globalpayments/cli run --config globalpayments.config.yaml --timeout 5m --json
 ```
 
 ### 4. Review results
@@ -190,6 +203,115 @@ Exchange credentials for a GP API token and report safe token metadata.
 **Example:**
 ```bash
 globalpayments auth test --json
+```
+
+---
+
+### `globalpayments sandbox create`
+Configure an existing GP Developer Portal sandbox app. Prompts for the app ID and
+hidden app key, then updates only the GP credential/environment entries in `.env`.
+The app key is not printed, and `.env` is added to `.gitignore` if no matching rule
+already exists. This command does not create an account or portal app.
+
+**Options:**
+- `--env-file <path>` — Env file to create or update (default: `.env`)
+- `--replace` — Prompt for credentials even when already configured
+- `--json` — Machine-readable output; prompts are disabled
+
+---
+
+### `globalpayments api get <path>` / `globalpayments api post <path>`
+Make an authenticated request to a root-relative GP API path. `GET` works in the
+configured environment; `POST` is rejected before sending unless the resolved
+environment is `sandbox`.
+
+**Options:**
+- `--data <json>` or `--data-file <path>` — JSON body for `POST` (exactly one required)
+- `--config <path>` — Config file path (optional)
+- `--env-file <path>` — Env file to load (default: `.env`)
+- `--json` — Machine-readable output
+
+```bash
+globalpayments api get /transactions --json
+globalpayments api post /transactions --data-file request.json --json
+```
+
+---
+
+### `globalpayments transactions get <id>`
+Fetch one transaction by its GP transaction ID. Accepts the same `--config`,
+`--env-file`, and `--json` options as `api get`.
+
+---
+
+### `globalpayments transactions testpay`
+Initiate a real GP API sandbox TestPay sale using a public HTTPS status URL and
+browser return URL you control. The URLs must point to approved infrastructure:
+the CLI cannot verify that a DNS name is reachable or controlled by you.
+Completing the TestPay checkout may be required before GP sends a status update;
+a successful API response is not proof of notification delivery.
+
+```bash
+globalpayments transactions testpay --status-url https://YOUR-HOST/status --return-url https://YOUR-HOST/return
+```
+
+`--amount` is in minor units (default `100`); `--currency`, `--country`, and
+`--account-name` default to `EUR`, `IE`, and `transaction_processing`. Their
+availability depends on your sandbox account. Writes are rejected outside sandbox.
+Do not use third-party webhook collectors for sensitive payloads.
+
+---
+
+### `globalpayments logs tail`
+Poll GP `/actions` history for requests rejected with a selected HTTP status class.
+Use `--once` for a snapshot or `--timeout` to bound a live tail. JSON mode requires
+one of those bounds so it returns exactly one envelope.
+
+```bash
+globalpayments logs tail --status 4xx
+globalpayments logs tail --status 5xx --once --json
+```
+
+---
+
+### `globalpayments listen` / `globalpayments trigger <event>`
+`listen` binds only to `127.0.0.1` and forwards POSTs to an unauthenticated localhost
+HTTP(S) URL. `trigger` sends a signed synthetic event to that listener; it does not
+create a transaction or register a real GP webhook.
+
+```bash
+globalpayments listen --forward-to http://localhost:3000/webhooks
+globalpayments trigger transaction.captured
+```
+
+Supported events: `transaction.captured`, `transaction.declined`,
+`transaction.refunded`, `transaction.reversed`, and `transaction.preauthorized`.
+With `--json`, `listen` also requires `--timeout`.
+
+Use `listen --verify-signature` to validate GP's POST signature before forwarding.
+The listener is still loopback-only: receiving real notifications requires an
+approved public HTTPS endpoint or relay that forwards to it. Verification does
+not distinguish a GP notification from a locally generated event signed with the
+same key. Never expose the local listener directly to the internet.
+
+---
+
+### `globalpayments agent setup`
+Install the Global Payments MCP server and SDK skills from
+[`globalpayments/agent-skills`](https://github.com/globalpayments/agent-skills) for
+detected or explicitly selected Claude Code, Cursor, or VS Code projects. Setup is
+sandbox-only and writes editor configuration plus a managed section in `AGENTS.md`.
+Setup and the launcher read credentials from `.env`; existing process environment
+variables take precedence. Credentials are not copied into editor settings. Its
+local MCP installation is ignored in `.gitignore`. Requires Git, npm, network access,
+and Node.js 22.20 or newer. The MCP server is built from a pinned official GitHub
+revision. That revision exposes documentation lookup and payment-link creation and
+retrieval, not generic API requests or transaction lookup. In sandbox mode it
+requests an access token from `https://apis-cert.globalpay.com` and sends payment-link
+requests to `https://apis.sandbox.globalpay.com`.
+
+```bash
+globalpayments agent setup --editor vscode
 ```
 
 ---
@@ -359,8 +481,8 @@ Typical output for a case that saw no match:
          transaction (id TRN_ccc) used 1001.
 ```
 
-Because `globalpayments` only observes, every fix is an instruction about the transaction
-**you** send — never a change to this tool.
+Because certification commands only observe, every fix is an instruction about the
+transaction **you** send — never a change to the certification runner.
 
 Note that `diagnose` exits `0` even when the run it is reading failed: it is a
 read-only inspection command, so it stays usable inside a fix loop. Branch on
@@ -633,8 +755,8 @@ jobs:
           GP_API_APP_KEY: ${{ secrets.GP_APP_KEY }}
           GP_API_ENVIRONMENT: sandbox
         run: |
-          npx @globalpayments/cli init --config .globalpayments/config.yaml
-          npx @globalpayments/cli run --config .globalpayments/config.yaml --timeout 5m --json
+          npx @globalpayments/cli init --with-config
+          npx @globalpayments/cli run --config globalpayments.config.yaml --timeout 5m --json
 
       - name: Upload results
         if: always()
@@ -650,12 +772,12 @@ jobs:
 
 - **Never hardcode credentials** — Always use environment variables
 - **Config is redacted** — Sensitive keys (`appKey`, `appId`, etc.) are masked in persisted config summaries
-- **No transaction submission** — The CLI only reads; it doesn't submit or modify transactions
+- **Certification is read-only** — `run` and `watch` only observe; `api post` can send requests only to sandbox
 - **Credentials are never logged** — Auth failures show only error codes, not secrets
 
 ### Recommended Practices
 
-- Use a dedicated service account with `transactions:read` scope only
+- Use a dedicated sandbox app for local API writes and synthetic webhook testing
 - Rotate credentials regularly
 - Store secrets in your CI/CD provider (GitHub Secrets, GitLab CI/CD variables, etc.)
 - Run certification observer in a separate environment from your integration

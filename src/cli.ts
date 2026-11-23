@@ -13,6 +13,11 @@ import { registerWatchCommand } from './commands/watch.js';
 import { registerRunCommand } from './commands/run.js';
 import { registerReportCommand } from './commands/report.js';
 import { registerDiagnoseCommand } from './commands/diagnose.js';
+import { registerApiCommands } from './commands/api.js';
+import { registerSandboxCommands } from './commands/sandbox.js';
+import { registerLogsCommand } from './commands/logs.js';
+import { registerWebhookCommands } from './commands/webhooks.js';
+import { registerAgentCommands } from './commands/agent.js';
 
 /**
  * Assemble the CLI.
@@ -27,7 +32,7 @@ export function buildCli(): Command {
   program
     .name('globalpayments')
     .description(
-      'Observer-only certification CLI for Global Payments. Polls the GP API for transactions you have already sent, matches them to certification cases, and reports latest-match-wins results. Run `globalpayments explain --json` for the full machine-readable contract.'
+      'Global Payments developer CLI for certification observation, sandbox API access, transaction lookup, local webhook testing, request logs, and AI-agent tooling. Run `globalpayments explain --json` for the full machine-readable contract.'
     )
     .version(CLI_VERSION);
 
@@ -36,6 +41,11 @@ export function buildCli(): Command {
   registerInitCommand(program);
   registerDoctorCommand(program);
   registerAuthCommands(program);
+  registerSandboxCommands(program);
+  registerApiCommands(program);
+  registerLogsCommand(program);
+  registerWebhookCommands(program);
+  registerAgentCommands(program);
 
   // Discover
   registerPacksCommands(program);
@@ -111,11 +121,10 @@ function wantsJson(argv: string[]): boolean {
   return (terminator === -1 ? argv : argv.slice(0, terminator)).includes('--json');
 }
 
-export async function runCli(argv: string[]): Promise<never> {
+export async function runCli(argv: string[]): Promise<void> {
   const program = buildCli();
   applyExitContract(program, wantsJson(argv));
 
   await program.parseAsync(argv);
 
-  process.exit(typeof process.exitCode === 'number' ? process.exitCode : EXIT_CODES.OK);
 }

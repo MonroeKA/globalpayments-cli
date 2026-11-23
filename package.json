@@ -1,7 +1,7 @@
 {
   "name": "@globalpayments/cli",
   "version": "0.1.0",
-  "description": "Observer-only certification CLI for Global Payments that polls transactions, matches certification cases, and reports latest-match-wins results.",
+  "description": "Global Payments developer CLI for certification, sandbox API access, local webhook testing, request logs, and AI-agent tooling.",
   "keywords": [
     "globalpayments",
     "payments",

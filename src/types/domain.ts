@@ -215,8 +215,8 @@ export interface Evidence {
  *
  * `reason` answers "what happened". A diagnosis answers the two questions that
  * actually unblock a caller: *which field* caused the miss, and *what should the
- * next request look like*. Because globalpayments is an observer, the remedy is always a
- * change to the transaction you send — never a change to this tool — so every fix
+ * next request look like*. Because certification commands are observers, the remedy is a
+ * change to the transaction you send — never a change to the certification runner — so every fix
  * is phrased as an instruction about the request.
  *
  * Computed by `src/core/diagnosis.ts`, which is the only place these are built.

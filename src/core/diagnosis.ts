@@ -488,7 +488,7 @@ export function diagnoseCase(input: DiagnosisInput): CaseDiagnosis | undefined {
       (Object.keys(requiredRequest.mustResultIn).length > 0
         ? `, which must result in ${JSON.stringify(requiredRequest.mustResultIn)}.`
         : '.') +
-      ' globalpayments only observes; it never creates transactions.',
+      ' Certification commands only observe; send it through your integration or with a sandbox API request.',
     confidence: 'high'
   };
 
